@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MD 阅读器</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="dark-theme">
+
+  <!-- 拖拽提示遮罩 -->
+  <div id="drop-overlay"><span>释放文件以打开</span></div>
+
+  <!-- Tab 栏 -->
+  <div id="tab-bar">
+    <div id="tab-list"></div>
+    <button id="btn-new-tab" title="新建标签页 (Cmd+T)">+</button>
+  </div>
+
+  <!-- 工具栏 -->
+  <div id="toolbar">
+    <span id="toolbar-filename">未命名</span>
+    <span id="toolbar-spacer"></span>
+    <span id="toolbar-wordcount" class="toolbar-info">0 字</span>
+    <button id="btn-theme" class="toolbar-btn" title="切换主题">浅色</button>
+    <button id="btn-focus" class="toolbar-btn" title="专注模式 (Cmd+Shift+F)">专注</button>
+    <button id="btn-toggle-mode" class="toolbar-btn">编辑</button>
+    <button id="btn-export" class="toolbar-btn">导出</button>
+  </div>
+
+  <!-- 内容区 -->
+  <div id="content-area">
+    <!-- 阅读模式 -->
+    <div id="reading-pane" class="pane active">
+      <div id="reader-content"></div>
+    </div>
+
+    <!-- 编辑模式 -->
+    <div id="editing-pane" class="pane">
+      <div id="editor-left">
+        <div id="codemirror-container"></div>
+      </div>
+      <div id="editor-divider"></div>
+      <div id="editor-right">
+        <div id="preview-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态栏 -->
+  <div id="status-bar">
+    <span id="status-cursor">Ln 1, Col 1</span>
+    <span id="status-spacer"></span>
+    <span id="status-info">阅读模式</span>
+  </div>
+
+  <script src="dist/bundle.js"></script>
+</body>
+</html>

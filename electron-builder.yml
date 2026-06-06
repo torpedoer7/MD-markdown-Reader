@@ -1,0 +1,60 @@
+appId: com.mdreader.app
+productName: MD阅读器
+copyright: Copyright © 2024
+
+directories:
+  output: release
+  buildResources: assets
+
+files:
+  - main.js
+  - preload.js
+  - renderer/dist/**/*
+  - renderer/index.html
+  - renderer/style.css
+  - node_modules/**/*
+
+mac:
+  icon: assets/icon.icns
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  extendInfo:
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: Markdown
+        CFBundleTypeRole: Editor
+        LSHandlerRank: Default
+        LSItemContentTypes:
+          - net.daringfireball.markdown
+    UTImportedTypeDeclarations:
+      - UTTypeIdentifier: net.daringfireball.markdown
+        UTTypeTagSpecification:
+          public.filename-extension:
+            - md
+            - markdown
+        UTTypeConformsTo:
+          - public.text
+        UTTypeDescription: Markdown
+
+win:
+  icon: assets/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  fileAssociations:
+    - ext: md
+      name: Markdown
+      description: Markdown 文件
+    - ext: markdown
+      name: Markdown
+      description: Markdown 文件
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+asar: true

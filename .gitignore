@@ -1,0 +1,8 @@
+node_modules/
+release/
+renderer/dist/
+*.dmg
+*.exe
+*.blockmap
+builder-debug.yml
+.DS_Store
