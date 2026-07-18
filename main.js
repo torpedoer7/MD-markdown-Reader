@@ -3,6 +3,14 @@ const path = require('path');
 const fs = require('fs');
 
 let mainWindow = null;
+// 窗口创建前收到的待打开文件
+const pendingFiles = [];
+
+// 判断命令行参数是否为 Markdown 文件（大小写不敏感）
+function isMarkdownArg(arg) {
+  const lower = arg.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.markdown');
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -124,6 +132,19 @@ function openFile(filePath) {
   }
 }
 
+// 渲染进程加载完成后再发送，避免消息在监听器注册前丢失
+function openFileWhenReady(filePath) {
+  if (!mainWindow) {
+    pendingFiles.push(filePath);
+    return;
+  }
+  if (mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.once('did-finish-load', () => openFile(filePath));
+  } else {
+    openFile(filePath);
+  }
+}
+
 // —— IPC: 渲染进程请求读取文件 ——
 ipcMain.handle('file:read', async (_event, filePath) => {
   try {
@@ -185,20 +206,15 @@ ipcMain.handle('export:pdf', async (_event, html) => {
 // —— macOS: 双击 .md 文件打开 ——
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
-  if (mainWindow) {
-    openFile(filePath);
-  } else {
-    // 窗口还没创建，先存起来
-    app._pendingFile = filePath;
-  }
+  openFileWhenReady(filePath);
 });
 
 // —— Windows: 通过命令行参数打开 ——
 app.on('second-instance', (_event, commandLine) => {
-  // 取最后一个 .md 参数
-  const args = commandLine.filter(arg => arg.endsWith('.md'));
-  if (args.length > 0 && mainWindow) {
-    openFile(args[args.length - 1]);
+  // 取最后一个 Markdown 文件参数
+  const args = commandLine.filter(isMarkdownArg);
+  if (args.length > 0) {
+    openFileWhenReady(args[args.length - 1]);
   }
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -214,16 +230,15 @@ if (!gotTheLock) {
 app.whenReady().then(() => {
   createWindow();
 
-  // 处理启动时待处理的文件
-  if (app._pendingFile) {
-    openFile(app._pendingFile);
-    app._pendingFile = null;
+  // 处理窗口创建前待打开的文件（macOS open-file 先于 ready 触发）
+  while (pendingFiles.length > 0) {
+    openFileWhenReady(pendingFiles.shift());
   }
 
   // Windows: 处理命令行参数
-  const mdArg = process.argv.find(arg => arg.endsWith('.md'));
+  const mdArg = process.argv.find(isMarkdownArg);
   if (mdArg) {
-    openFile(mdArg);
+    openFileWhenReady(mdArg);
   }
 
   app.on('activate', () => {

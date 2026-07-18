@@ -51,7 +51,6 @@ win:
     - ext: markdown
       name: Markdown
       description: Markdown 文件
-  signAndEditExecutable: false
 
 nsis:
   oneClick: false

@@ -1,7 +1,7 @@
 // —— 渲染进程入口 ——
 
 import { renderMarkdown, setFocusMode, updateWordCount } from './reader.js';
-import { initEditor, getEditorContent, setEditorContent, destroyEditor, setAutoSaveCallback, switchEditorTheme } from './editor.js';
+import { initEditor, getEditorContent, setEditorContent, destroyEditor, setAutoSaveCallback, switchEditorTheme, openSearch } from './editor.js';
 import { extractFileName, countWords } from './utils.js';
 
 // ===========================
@@ -11,6 +11,8 @@ import { extractFileName, countWords } from './utils.js';
 let tabs = [];
 let activeTabId = null;
 let isFocusMode = false;
+// 编辑器当前对应的标签页 id（自动保存按此定位，避免切换标签后写错文件）
+let editorTabId = null;
 
 // ===========================
 // Tab 管理
@@ -27,6 +29,10 @@ function createTab(filePath, source) {
 function closeTab(tabId) {
   if (tabs.length <= 1) {
     const tab = tabs[0];
+    if (tab.dirty) {
+      const confirmed = confirm(`"${tab.title}" 有未保存的修改，确定关闭吗？`);
+      if (!confirmed) return;
+    }
     tab.filePath = '';
     tab.title = '未命名';
     tab.source = '';
@@ -91,6 +97,7 @@ function getCurrentMode() {
 function restoreTab(tab) {
   switchModeInternal(tab.mode);
   if (tab.mode === 'editing') {
+    editorTabId = tab.id;
     initEditor(tab.source);
   } else {
     const baseDir = tab.filePath ? tab.filePath.replace(/[/\\][^/\\]*$/, '') : '';
@@ -151,6 +158,7 @@ function switchModeInternal(mode) {
     toggleBtn.textContent = '阅读';
   } else {
     destroyEditor();
+    editorTabId = null;
     editingPane.classList.remove('active');
     readingPane.classList.add('active');
     toggleBtn.textContent = '编辑';
@@ -169,6 +177,7 @@ function toggleMode() {
 
   if (newMode === 'editing') {
     switchModeInternal('editing');
+    editorTabId = tab ? tab.id : null;
     initEditor(tab ? tab.source : '');
   } else {
     switchModeInternal('reading');
@@ -207,7 +216,8 @@ function openFileFromMain(data) {
 }
 
 function onAutoSave(source) {
-  const tab = getActiveTab();
+  // 按编辑器所属标签页定位，防止防抖期间切换标签后写入错误文件
+  const tab = getTab(editorTabId);
   if (!tab || !tab.filePath) return;
   try {
     window.electronAPI.saveFile(tab.filePath, source).then(result => {
@@ -239,9 +249,8 @@ async function exportPDF() {
   const source = getCurrentSource();
   const baseDir = tab.filePath ? tab.filePath.replace(/[/\\][^/\\]*$/, '') : '';
 
-  if (getCurrentMode() === 'reading') {
-    renderMarkdown(source, baseDir);
-  }
+  // 导出前总是用最新内容重新渲染，避免编辑模式下导出陈旧/空的 HTML
+  renderMarkdown(source, baseDir);
 
   const html = document.getElementById('reader-content').innerHTML;
   const printHtml = buildPrintHtml(html, tab.title);
@@ -454,6 +463,10 @@ function init() {
     window.electronAPI.onMenuCommand('menu:toggle-focus', () => { isFocusMode = setFocusMode(!isFocusMode); });
     window.electronAPI.onMenuCommand('menu:new-tab', () => { const tab = createTab('', ''); switchTab(tab.id); });
     window.electronAPI.onMenuCommand('menu:close-tab', () => closeTab(activeTabId));
+    // 查找/替换仅在编辑模式下生效（CodeMirror 面板同时包含查找与替换）
+    const openEditorSearch = () => { if (getCurrentMode() === 'editing') openSearch(); };
+    window.electronAPI.onMenuCommand('menu:find', openEditorSearch);
+    window.electronAPI.onMenuCommand('menu:replace', openEditorSearch);
   }
 
   // 初始化空白 Tab

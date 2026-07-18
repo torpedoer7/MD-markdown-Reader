@@ -4,7 +4,7 @@ import { EditorView, keymap, drawSelection, highlightActiveLine, lineNumbers } f
 import { EditorState } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { searchKeymap } from '@codemirror/search';
+import { searchKeymap, openSearchPanel } from '@codemirror/search';
 import { closeBrackets } from '@codemirror/autocomplete';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { marked } from 'marked';
@@ -170,6 +170,13 @@ function updateCursorPosition(state) {
 
 export function getEditorContent() {
   return editorView ? editorView.state.doc.toString() : '';
+}
+
+/**
+ * 打开查找/替换面板（CodeMirror 面板同时包含查找与替换）
+ */
+export function openSearch() {
+  if (editorView) openSearchPanel(editorView);
 }
 
 export function setEditorContent(content) {
