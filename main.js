@@ -12,6 +12,13 @@ function isMarkdownArg(arg) {
   return lower.endsWith('.md') || lower.endsWith('.markdown');
 }
 
+// 向主窗口发送消息；窗口已关闭时忽略，避免访问已销毁对象
+function sendToMain(channel) {
+  if (mainWindow) {
+    mainWindow.webContents.send(channel);
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1100,
@@ -29,6 +36,18 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
+  // 窗口关闭后释放引用，避免后续访问已销毁对象
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  // 新窗口加载完成后，处理队列中待打开的文件
+  mainWindow.webContents.on('did-finish-load', () => {
+    while (pendingFiles.length > 0) {
+      openFileWhenReady(pendingFiles.shift());
+    }
+  });
+
   // 应用菜单（仅 macOS 需要，Windows 有原生菜单栏）
   const menuTemplate = [
     {
@@ -42,13 +61,13 @@ function createWindow() {
         {
           label: '保存',
           accelerator: 'CmdOrCtrl+S',
-          click: () => mainWindow.webContents.send('menu:save'),
+          click: () => sendToMain('menu:save'),
         },
         { type: 'separator' },
         {
           label: '导出 PDF...',
           accelerator: 'CmdOrCtrl+Shift+P',
-          click: () => mainWindow.webContents.send('menu:export-pdf'),
+          click: () => sendToMain('menu:export-pdf'),
         },
         { type: 'separator' },
         { role: 'quit' },
@@ -68,12 +87,12 @@ function createWindow() {
         {
           label: '查找',
           accelerator: 'CmdOrCtrl+F',
-          click: () => mainWindow.webContents.send('menu:find'),
+          click: () => sendToMain('menu:find'),
         },
         {
           label: '替换',
           accelerator: 'CmdOrCtrl+H',
-          click: () => mainWindow.webContents.send('menu:replace'),
+          click: () => sendToMain('menu:replace'),
         },
       ],
     },
@@ -83,23 +102,23 @@ function createWindow() {
         {
           label: '切换阅读/编辑',
           accelerator: 'CmdOrCtrl+E',
-          click: () => mainWindow.webContents.send('menu:toggle-mode'),
+          click: () => sendToMain('menu:toggle-mode'),
         },
         {
           label: '专注模式',
           accelerator: 'CmdOrCtrl+Shift+F',
-          click: () => mainWindow.webContents.send('menu:toggle-focus'),
+          click: () => sendToMain('menu:toggle-focus'),
         },
         { type: 'separator' },
         {
           label: '新建标签页',
           accelerator: 'CmdOrCtrl+T',
-          click: () => mainWindow.webContents.send('menu:new-tab'),
+          click: () => sendToMain('menu:new-tab'),
         },
         {
           label: '关闭标签页',
           accelerator: 'CmdOrCtrl+W',
-          click: () => mainWindow.webContents.send('menu:close-tab'),
+          click: () => sendToMain('menu:close-tab'),
         },
         { type: 'separator' },
         { role: 'toggleDevTools' },
@@ -112,13 +131,17 @@ function createWindow() {
 
 // —— 打开文件对话框 ——
 async function openFileDialog() {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  // 窗口可能已关闭（macOS 菜单仍在），此时以无父窗口方式弹出对话框
+  const options = {
     title: '打开 Markdown 文件',
     filters: [{ name: 'Markdown 文件', extensions: ['md', 'markdown'] }],
     properties: ['openFile'],
-  });
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options);
   if (!result.canceled && result.filePaths.length > 0) {
-    openFile(result.filePaths[0]);
+    openFileWhenReady(result.filePaths[0]);
   }
 }
 
@@ -126,7 +149,9 @@ async function openFileDialog() {
 function openFile(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
-    mainWindow.webContents.send('file:open', { filePath, content });
+    if (mainWindow) {
+      mainWindow.webContents.send('file:open', { filePath, content });
+    }
   } catch (err) {
     dialog.showErrorBox('打开失败', `无法读取文件: ${err.message}`);
   }
@@ -135,7 +160,11 @@ function openFile(filePath) {
 // 渲染进程加载完成后再发送，避免消息在监听器注册前丢失
 function openFileWhenReady(filePath) {
   if (!mainWindow) {
+    // 窗口未创建或已关闭：先入队并创建新窗口，加载完成后处理
     pendingFiles.push(filePath);
+    if (app.isReady()) {
+      createWindow();
+    }
     return;
   }
   if (mainWindow.webContents.isLoading()) {
@@ -145,8 +174,18 @@ function openFileWhenReady(filePath) {
   }
 }
 
+// 校验 IPC 传入的文件路径：必须是 .md/.markdown 的绝对路径，防止渲染进程读写任意文件
+function isValidMarkdownPath(filePath) {
+  return typeof filePath === 'string'
+    && path.isAbsolute(filePath)
+    && /\.(md|markdown)$/i.test(filePath);
+}
+
 // —— IPC: 渲染进程请求读取文件 ——
 ipcMain.handle('file:read', async (_event, filePath) => {
+  if (!isValidMarkdownPath(filePath)) {
+    return { success: false, error: '非法的文件路径' };
+  }
   try {
     return { success: true, content: fs.readFileSync(filePath, 'utf-8') };
   } catch (err) {
@@ -155,7 +194,10 @@ ipcMain.handle('file:read', async (_event, filePath) => {
 });
 
 // —— IPC: 保存文件 ——
-ipcMain.handle('file:save', async (_event, { filePath, content }) => {
+ipcMain.handle('file:save', async (_event, { filePath, content } = {}) => {
+  if (!isValidMarkdownPath(filePath) || typeof content !== 'string') {
+    return { success: false, error: '非法的保存参数' };
+  }
   try {
     fs.writeFileSync(filePath, content, 'utf-8');
     return { success: true };
@@ -166,11 +208,17 @@ ipcMain.handle('file:save', async (_event, { filePath, content }) => {
 
 // —— IPC: 导出 PDF ——
 ipcMain.handle('export:pdf', async (_event, html) => {
-  const result = await dialog.showSaveDialog(mainWindow, {
+  if (typeof html !== 'string') {
+    return { success: false, error: '非法的导出内容' };
+  }
+  const options = {
     title: '导出 PDF',
     defaultPath: '文档.pdf',
     filters: [{ name: 'PDF 文件', extensions: ['pdf'] }],
-  });
+  };
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, options)
+    : await dialog.showSaveDialog(options);
 
   if (result.canceled) return { success: false, canceled: true };
 
@@ -185,21 +233,20 @@ ipcMain.handle('export:pdf', async (_event, html) => {
     },
   });
 
-  // 加载 HTML 内容
-  await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-
   try {
+    // 加载 HTML 内容（loadURL 失败时也要关闭隐藏窗口，避免泄漏）
+    await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     const pdfData = await printWin.webContents.printToPDF({
       printBackground: true,
       marginsType: 1, // 最小边距
       pageSize: 'A4',
     });
     fs.writeFileSync(result.filePath, pdfData);
-    printWin.close();
     return { success: true, filePath: result.filePath };
   } catch (err) {
-    printWin.close();
     return { success: false, error: err.message };
+  } finally {
+    if (!printWin.isDestroyed()) printWin.close();
   }
 });
 
@@ -228,12 +275,8 @@ if (!gotTheLock) {
 }
 
 app.whenReady().then(() => {
+  // createWindow 加载完成后会自动处理 pendingFiles 队列
   createWindow();
-
-  // 处理窗口创建前待打开的文件（macOS open-file 先于 ready 触发）
-  while (pendingFiles.length > 0) {
-    openFileWhenReady(pendingFiles.shift());
-  }
 
   // Windows: 处理命令行参数
   const mdArg = process.argv.find(isMarkdownArg);

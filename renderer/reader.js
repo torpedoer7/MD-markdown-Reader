@@ -18,19 +18,19 @@ export function renderMarkdown(source, baseDir) {
 
   // 自定义图片渲染：解析相对路径
   renderer.image = function (href, title, text) {
-    let src = href;
-    if (baseDir && href && !href.startsWith('http') && !href.startsWith('/') && !href.startsWith('data:')) {
-      src = 'file://' + baseDir + '/' + href;
+    let src = href || '';
+    if (baseDir && src && !src.startsWith('http') && !src.startsWith('/') && !src.startsWith('data:')) {
+      src = 'file://' + baseDir + '/' + src;
     }
-    const titleAttr = title ? ` title="${title}"` : '';
-    const altAttr = text ? ` alt="${text}"` : '';
-    return `<img src="${src}"${altAttr}${titleAttr}>`;
+    const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+    const altAttr = text ? ` alt="${escapeHtml(text)}"` : '';
+    return `<img src="${escapeHtml(src)}"${altAttr}${titleAttr}>`;
   };
 
   // 自定义代码块渲染
   renderer.code = function (code, language) {
-    const langLabel = language ? language.toUpperCase() : '';
-    const langAttr = language ? ` class="language-${language}"` : '';
+    const langLabel = language ? escapeHtml(language.toUpperCase()) : '';
+    const langAttr = language ? ` class="language-${escapeHtml(language)}"` : '';
 
     let highlighted;
     try {
@@ -44,7 +44,7 @@ export function renderMarkdown(source, baseDir) {
     }
 
     const escapedCode = escapeHtml(code);
-    return `<div class="code-block-wrapper">${langLabel ? `<span class="code-lang">${langLabel}</span>` : ''}<button class="code-copy-btn" data-code="${escapedCode}" onclick="copyCodeBlock(this)">复制</button><pre><code${langAttr}>${highlighted}</code></pre></div>`;
+    return `<div class="code-block-wrapper">${langLabel ? `<span class="code-lang">${langLabel}</span>` : ''}<button class="code-copy-btn" data-code="${escapedCode}">复制</button><pre><code${langAttr}>${highlighted}</code></pre></div>`;
   };
 
   marked.setOptions({ renderer, breaks: true, gfm: true });
@@ -59,6 +59,11 @@ export function renderMarkdown(source, baseDir) {
       this.style.cssText = 'padding: 20px; border: 1px dashed var(--border); border-radius: 8px; color: var(--text-muted); font-size: 14px; display: block;';
     };
   });
+
+  // 绑定代码块复制按钮（用事件绑定代替内联 onclick，以便启用严格 CSP）
+  contentEl.querySelectorAll('.code-copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => copyCodeBlock(btn));
+  });
 }
 
 function escapeHtml(text) {
@@ -67,9 +72,9 @@ function escapeHtml(text) {
 }
 
 /**
- * 复制代码块，挂载到 window 以便 onclick 调用
+ * 复制代码块内容到剪贴板
  */
-window.copyCodeBlock = function (btn) {
+function copyCodeBlock(btn) {
   const rawCode = btn.getAttribute('data-code');
   navigator.clipboard.writeText(rawCode).then(() => {
     btn.textContent = '已复制';
@@ -87,11 +92,8 @@ window.copyCodeBlock = function (btn) {
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 2000);
   });
-};
+}
 
-/**
- * 切换专注模式
- */
 /**
  * 设置专注模式状态
  * @param {boolean} enter - true 进入专注模式，false 退出

@@ -65,7 +65,7 @@ body {
   background: var(--bg-deep);
   padding: 0 8px 0 80px; /* macOS 红绿灯留白 */
   border-bottom: 1px solid var(--border);
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag; /* 顶部栏可拖动窗口 */
   flex-shrink: 0;
 }
 
@@ -96,6 +96,7 @@ body {
   max-width: 160px;
   position: relative;
   user-select: none;
+  -webkit-app-region: no-drag; /* 标签本身可点击，不触发拖动 */
 }
 
 .tab-item.active {
@@ -148,6 +149,7 @@ body {
   border-radius: 4px;
   transition: color 0.15s;
   flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 
 #btn-new-tab:hover {

@@ -6,9 +6,9 @@
   "scripts": {
     "bundle": "esbuild renderer/renderer.js --bundle --outfile=renderer/dist/bundle.js --format=iife --global-name=App",
     "start": "npm run bundle && electron .",
-    "build:mac": "electron-builder --mac",
-    "build:win": "electron-builder --win",
-    "build": "electron-builder --mac --win"
+    "build:mac": "npm run bundle && electron-builder --mac",
+    "build:win": "npm run bundle && electron-builder --win",
+    "build": "npm run bundle && electron-builder --mac --win"
   },
   "author": "",
   "license": "MIT",

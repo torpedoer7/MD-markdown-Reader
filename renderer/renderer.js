@@ -1,8 +1,8 @@
 // —— 渲染进程入口 ——
 
 import { renderMarkdown, setFocusMode, updateWordCount } from './reader.js';
-import { initEditor, getEditorContent, setEditorContent, destroyEditor, setAutoSaveCallback, switchEditorTheme, openSearch } from './editor.js';
-import { extractFileName, countWords } from './utils.js';
+import { initEditor, getEditorContent, setEditorContent, destroyEditor, setAutoSaveCallback, setDirtyCallback, switchEditorTheme, openSearch } from './editor.js';
+import { extractFileName, countWords, escapeHtml } from './utils.js';
 
 // ===========================
 // 全局状态
@@ -38,9 +38,9 @@ function closeTab(tabId) {
     tab.source = '';
     tab.mode = 'reading';
     tab.dirty = false;
-    if (tabId === activeTabId) switchTab(tab.id);
+    // 直接恢复清空后的标签；走 switchTab 会把编辑器里的旧内容重新快照回来
+    if (tabId === activeTabId) restoreTab(tab);
     renderTabBar();
-    renderCurrentTab();
     return;
   }
 
@@ -76,7 +76,6 @@ function switchTab(tabId) {
 
   restoreTab(tab);
   renderTabBar();
-  renderCurrentTab();
   updateWordCount(tab.source);
   updateStatusBar();
 }
@@ -98,7 +97,7 @@ function restoreTab(tab) {
   switchModeInternal(tab.mode);
   if (tab.mode === 'editing') {
     editorTabId = tab.id;
-    initEditor(tab.source);
+    initEditor(tab.source, tab.id);
   } else {
     const baseDir = tab.filePath ? tab.filePath.replace(/[/\\][^/\\]*$/, '') : '';
     renderMarkdown(tab.source, baseDir);
@@ -178,7 +177,7 @@ function toggleMode() {
   if (newMode === 'editing') {
     switchModeInternal('editing');
     editorTabId = tab ? tab.id : null;
-    initEditor(tab ? tab.source : '');
+    initEditor(tab ? tab.source : '', editorTabId);
   } else {
     switchModeInternal('reading');
     if (tab) {
@@ -223,7 +222,9 @@ function onAutoSave(source) {
     window.electronAPI.saveFile(tab.filePath, source).then(result => {
       if (result.success) {
         tab.source = source;
-        tab.dirty = false;
+        // 防抖快照保存期间用户可能继续输入：内容已变化则保持未保存标记
+        const current = tab.id === editorTabId ? getEditorContent() : tab.source;
+        if (current === source) tab.dirty = false;
         renderTabBar();
       }
     });
@@ -239,6 +240,8 @@ function saveCurrentFile() {
       tab.source = source;
       tab.dirty = false;
       renderTabBar();
+    } else {
+      alert('保存失败: ' + (result.error || '未知错误'));
     }
   });
 }
@@ -258,13 +261,14 @@ async function exportPDF() {
   try {
     const result = await window.electronAPI.exportPDF(printHtml);
     if (result.canceled) return;
+    if (!result.success) alert('导出失败: ' + (result.error || '未知错误'));
   } catch (e) {
     alert('导出失败: ' + e.message);
   }
 }
 
 function buildPrintHtml(bodyHtml, title) {
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:680px;margin:40px auto;padding:0 20px;font-size:16px;line-height:1.8;color:#1a1a1a;background:#fff}h1{font-size:26px;margin:36px 0 18px}h2{font-size:22px;margin:30px 0 14px}h3{font-size:18px;margin:24px 0 10px}p{margin:10px 0}pre{background:#f5f5f5;padding:16px;border-radius:6px;overflow-x:auto;font-size:14px;line-height:1.6}code{font-family:"JetBrains Mono","Fira Code",monospace;font-size:0.9em}pre code{font-size:13px}blockquote{border-left:3px solid #ccc;margin:12px 0;padding:6px 16px;color:#555}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:8px 12px;border:1px solid #ddd;text-align:left}th{background:#f5f5f5;font-weight:600}img{max-width:100%}.code-lang,.code-copy-btn{display:none}</style></head><body>${bodyHtml}</body></html>`;
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>${escapeHtml(title)}</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:680px;margin:40px auto;padding:0 20px;font-size:16px;line-height:1.8;color:#1a1a1a;background:#fff}h1{font-size:26px;margin:36px 0 18px}h2{font-size:22px;margin:30px 0 14px}h3{font-size:18px;margin:24px 0 10px}p{margin:10px 0}pre{background:#f5f5f5;padding:16px;border-radius:6px;overflow-x:auto;font-size:14px;line-height:1.6}code{font-family:"JetBrains Mono","Fira Code",monospace;font-size:0.9em}pre code{font-size:13px}blockquote{border-left:3px solid #ccc;margin:12px 0;padding:6px 16px;color:#555}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:8px 12px;border:1px solid #ddd;text-align:left}th{background:#f5f5f5;font-weight:600}img{max-width:100%}.code-lang,.code-copy-btn{display:none}</style></head><body>${bodyHtml}</body></html>`;
 }
 
 // ===========================
@@ -398,6 +402,14 @@ function initDropHandler() {
 function init() {
   // 注册自动保存回调
   setAutoSaveCallback(onAutoSave);
+  // 编辑器内容变化时给所属标签页打未保存标记
+  setDirtyCallback(() => {
+    const tab = getTab(editorTabId);
+    if (tab && !tab.dirty) {
+      tab.dirty = true;
+      renderTabBar();
+    }
+  });
 
   // 加载保存的主题
   loadTheme();
@@ -439,12 +451,12 @@ function init() {
     if (isMeta && e.key === 'e') { e.preventDefault(); toggleMode(); }
     if (isMeta && e.key === 't') { e.preventDefault(); const tab = createTab('', ''); switchTab(tab.id); }
     if (isMeta && e.key === 'w') { e.preventDefault(); closeTab(activeTabId); }
-    if (isMeta && e.shiftKey && e.key === ']') {
+    if (isMeta && e.shiftKey && e.code === 'BracketRight') {
       e.preventDefault();
       const idx = tabs.findIndex(t => t.id === activeTabId);
       if (idx < tabs.length - 1) switchTab(tabs[idx + 1].id);
     }
-    if (isMeta && e.shiftKey && e.key === '[') {
+    if (isMeta && e.shiftKey && e.code === 'BracketLeft') {
       e.preventDefault();
       const idx = tabs.findIndex(t => t.id === activeTabId);
       if (idx > 0) switchTab(tabs[idx - 1].id);

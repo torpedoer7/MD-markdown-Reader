@@ -10,6 +10,14 @@ export function extractFileName(filePath) {
 }
 
 /**
+ * HTML 特殊字符转义
+ */
+export function escapeHtml(text) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(text).replace(/[&<>"']/g, char => map[char]);
+}
+
+/**
  * 字数统计：中文按字符数，英文按单词数
  */
 export function countWords(source) {

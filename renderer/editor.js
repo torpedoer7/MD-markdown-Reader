@@ -1,7 +1,7 @@
 // —— 编辑模式 ——
 
 import { EditorView, keymap, drawSelection, highlightActiveLine, lineNumbers } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { searchKeymap, openSearchPanel } from '@codemirror/search';
@@ -13,10 +13,20 @@ import hljs from 'highlight.js';
 let editorView = null;
 let autoSaveTimer = null;
 let autoSaveCallback = null;
+let dirtyCallback = null;
 let editorIsDark = true;
+// 编辑器当前服务的标签页 id；切换标签时据此重建编辑器，避免撤销历史/状态跨文件串扰
+let editorKey = null;
+let previewTimer = null;
+// 主题用 Compartment 动态切换，避免重建编辑器丢失撤销历史
+const themeCompartment = new Compartment();
 
 export function setAutoSaveCallback(fn) {
   autoSaveCallback = fn;
+}
+
+export function setDirtyCallback(fn) {
+  dirtyCallback = fn;
 }
 
 // 深色编辑器主题
@@ -67,32 +77,28 @@ function getActiveTheme() {
 export function switchEditorTheme(isDark) {
   editorIsDark = isDark;
   if (!editorView) return;
-  // 重建编辑器以应用新主题
-  const source = editorView.state.doc.toString();
-  editorView.destroy();
-  editorView = null;
-  createEditor(source);
+  // 只重配主题扩展，保留文档与撤销历史
+  editorView.dispatch({ effects: themeCompartment.reconfigure(getActiveTheme()) });
 }
 
 /**
  * 初始化 CodeMirror 6 编辑器
+ * @param {string} initialContent 初始文档
+ * @param {string|null} key 所属标签页 id；同一 id 重复调用时保留编辑状态
  */
-export function initEditor(initialContent) {
-  const container = document.getElementById('codemirror-container');
-  if (editorView) {
-    editorView.dispatch({
-      changes: { from: 0, to: editorView.state.doc.length, insert: initialContent || '' },
-    });
-    return;
-  }
+export function initEditor(initialContent, key = null) {
+  if (editorView && key !== null && key === editorKey) return;
+  destroyEditor();
   createEditor(initialContent);
+  editorKey = key;
+  updatePreview(initialContent || '');
 }
 
 function createEditor(initialContent) {
   const container = document.getElementById('codemirror-container');
 
   const extensions = [
-    getActiveTheme(),
+    themeCompartment.of(getActiveTheme()),
     lineNumbers(),
     syntaxHighlighting(defaultHighlightStyle),
     history(),
@@ -121,7 +127,13 @@ function createEditor(initialContent) {
 function onEditorChange() {
   if (!editorView) return;
   const source = editorView.state.doc.toString();
-  updatePreview(source);
+  if (dirtyCallback) dirtyCallback();
+  // 预览渲染含语法高亮，开销较大，做防抖
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    previewTimer = null;
+    updatePreview(source);
+  }, 200);
   scheduleAutoSave(source);
 }
 
@@ -141,7 +153,7 @@ function updatePreview(source) {
     } catch (e) {
       highlighted = escapeHtml(code);
     }
-    const langAttr = language ? ` class="language-${language}"` : '';
+    const langAttr = language ? ` class="language-${escapeHtml(language)}"` : '';
     return `<pre><code${langAttr}>${highlighted}</code></pre>`;
   };
 
@@ -192,8 +204,13 @@ export function destroyEditor() {
     editorView.destroy();
     editorView = null;
   }
+  editorKey = null;
   if (autoSaveTimer) {
     clearTimeout(autoSaveTimer);
     autoSaveTimer = null;
+  }
+  if (previewTimer) {
+    clearTimeout(previewTimer);
+    previewTimer = null;
   }
 }
